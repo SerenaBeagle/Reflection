@@ -2,14 +2,16 @@
 
 import React, { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -25,6 +27,15 @@ export default function LoginPage() {
 
     void checkSession();
   }, [router]);
+
+  useEffect(() => {
+    if (searchParams.get('registered') === '1') {
+      setSuccessMessage('注册成功，现在请用刚刚的邮箱和密码登录。');
+      return;
+    }
+
+    setSuccessMessage('');
+  }, [searchParams]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -72,6 +83,9 @@ export default function LoginPage() {
           />
           {errorMessage ? (
             <p className="text-sm text-rose-500">{errorMessage}</p>
+          ) : null}
+          {successMessage ? (
+            <p className="text-sm text-emerald-600">{successMessage}</p>
           ) : null}
           <button
             className="mt-2 py-3 rounded-xl bg-pink-400 text-white font-semibold shadow-md hover:bg-pink-500 transition"

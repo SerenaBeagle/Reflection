@@ -91,8 +91,12 @@ export default function InsightsPage() {
               <div className="flex flex-wrap gap-2">
                 {insights.length === 0 ? (
                   <span className="text-sm text-gray-400">写几条日记后，这里会出现你的情绪片段。</span>
-                ) : insights.map(insight => (
-                  <EmotionBadge key={insight.date + insight.emotion} emotion={insight.emotion} count={insight.intensity} />
+                ) : insights.map((insight, index) => (
+                  <EmotionBadge
+                    key={`${insight.date}-${insight.emotion}-${insight.intensity}-${index}`}
+                    emotion={insight.emotion}
+                    count={insight.intensity}
+                  />
                 ))}
               </div>
             </section>

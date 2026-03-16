@@ -1,12 +1,10 @@
 'use client';
 
-import React, { FormEvent, useEffect, useState } from 'react';
+import React, { FormEvent, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 
 export default function SignupPage() {
-  const router = useRouter();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -14,20 +12,6 @@ export default function SignupPage() {
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    const checkSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (session) {
-        router.replace('/chat');
-      }
-    };
-
-    void checkSession();
-  }, [router]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -61,15 +45,11 @@ export default function SignupPage() {
       return;
     }
 
+    await supabase.auth.signOut();
+
     setIsSubmitting(false);
-
-    if (data.session) {
-      router.push('/chat');
-      router.refresh();
-      return;
-    }
-
-    setSuccessMessage('注册成功，请先去邮箱完成验证，然后再登录。');
+    setSuccessMessage('注册成功，请回到登录页重新登录。');
+    window.location.assign('/login?registered=1');
   };
 
   return (
