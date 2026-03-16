@@ -86,7 +86,7 @@ export function buildEmotionTrends(entries: DiaryEntryAggregate[], today: Date):
     .slice(0, 3)
     .map(([emotion]) => emotion as EmotionType);
 
-  const emotions = topEmotions.length > 0 ? topEmotions : ['neutral'];
+  const emotions: EmotionType[] = topEmotions.length > 0 ? topEmotions : ['neutral'];
 
   return emotions.map((emotion) => ({
     emotion,

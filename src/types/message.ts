@@ -1,4 +1,4 @@
-import { AIMode, User } from './user';
+import { AIMode } from './user';
 
 export type Message = {
   id: string;

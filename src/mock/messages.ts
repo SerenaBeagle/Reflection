@@ -16,7 +16,7 @@ export const mockMessages: Message[] = [
     content: '我在这里陪着你，想聊聊发生了什么吗？',
     createdAt: '2026-03-14T09:01:00Z',
     aiMode: 'gentle-listener',
-    emotion: 'gentle-listener',
+    emotion: 'calm',
   },
   {
     id: 'm3',
@@ -33,6 +33,6 @@ export const mockMessages: Message[] = [
     content: '孤单的时候可以和我说说话，我一直都在。',
     createdAt: '2026-03-14T09:03:00Z',
     aiMode: 'gentle-listener',
-    emotion: 'gentle-listener',
+    emotion: 'calm',
   },
 ];

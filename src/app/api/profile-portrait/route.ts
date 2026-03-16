@@ -12,6 +12,15 @@ type PortraitRequestBody = {
   endDate: string;
 };
 
+type ResponseOutputContentItem = {
+  type?: string;
+  text?: string;
+};
+
+type ResponseOutputItem = {
+  content?: ResponseOutputContentItem[];
+};
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -111,14 +120,14 @@ function extractOutputText(payload: unknown) {
     return '';
   }
 
-  return payload.output
+  return (payload.output as ResponseOutputItem[])
     .flatMap((item) => {
       if (!item || typeof item !== 'object' || !('content' in item) || !Array.isArray(item.content)) {
         return [];
       }
 
       return item.content
-        .map((contentItem) => {
+        .map((contentItem: ResponseOutputContentItem) => {
           if (
             contentItem &&
             typeof contentItem === 'object' &&
