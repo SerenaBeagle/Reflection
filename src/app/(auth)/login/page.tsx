@@ -2,31 +2,16 @@
 
 import React, { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
 
 export default function LoginPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    const checkSession = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (session) {
-        router.replace('/chat');
-      }
-    };
-
-    void checkSession();
-  }, [router]);
 
   useEffect(() => {
     if (searchParams.get('registered') === '1') {
@@ -54,8 +39,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push('/chat');
-    router.refresh();
+    window.location.assign('/chat');
   };
 
   return (
