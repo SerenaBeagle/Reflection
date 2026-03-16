@@ -5,6 +5,7 @@ export type Message = {
   threadId: string;
   sender: 'user' | 'ai';
   content: string;
+  imageUrl?: string | null;
   createdAt: string;
   aiMode?: AIMode;
   emotion?: EmotionType;

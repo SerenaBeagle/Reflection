@@ -51,6 +51,13 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isUser, aiMode 
             : `rounded-bl-md ${modeStyle.bubble}`,
         )}
       >
+        {message.imageUrl ? (
+          <img
+            src={message.imageUrl}
+            alt="聊天中分享的图片"
+            className="mb-3 max-h-72 w-full rounded-2xl object-cover"
+          />
+        ) : null}
         {message.content}
       </div>
       {isUser && (

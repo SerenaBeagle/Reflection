@@ -7,6 +7,7 @@ type ChatRequestBody = {
   messages: Message[];
   aiMode: AIMode;
   mode: 'chat' | 'diary';
+  imageUrl?: string | null;
 };
 
 export async function POST(request: NextRequest) {
@@ -22,9 +23,10 @@ export async function POST(request: NextRequest) {
 
     const body = (await request.json()) as ChatRequestBody;
     const message = body.message?.trim();
+    const imageUrl = body.imageUrl?.trim() || '';
 
-    if (!message) {
-      return NextResponse.json({ error: '消息内容不能为空。' }, { status: 400 });
+    if (!message && !imageUrl) {
+      return NextResponse.json({ error: '消息内容或图片不能为空。' }, { status: 400 });
     }
 
     const model = process.env.OPENAI_MODEL || 'gpt-5-mini';
@@ -45,15 +47,14 @@ export async function POST(request: NextRequest) {
         input: [
           ...recentMessages.map((item) => ({
             role: item.sender === 'user' ? 'user' : 'assistant',
-            content: [
+            content:
               item.sender === 'user'
-                ? { type: 'input_text', text: item.content }
-                : { type: 'output_text', text: item.content },
-            ],
+                ? buildUserContent(item.content, item.imageUrl)
+                : [{ type: 'output_text', text: item.content }],
           })),
           {
             role: 'user',
-            content: [{ type: 'input_text', text: message }],
+            content: buildUserContent(message, imageUrl),
           },
         ],
       }),
@@ -148,6 +149,27 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function buildUserContent(message: string, imageUrl?: string | null) {
+  const content: Array<
+    | { type: 'input_text'; text: string }
+    | { type: 'input_image'; image_url: string }
+  > = [];
+
+  if (message) {
+    content.push({ type: 'input_text', text: message });
+  }
+
+  if (imageUrl && !message) {
+    content.push({ type: 'input_text', text: '请根据这张图片，用自然陪伴的方式回复我。' });
+  }
+
+  if (imageUrl) {
+    content.push({ type: 'input_image', image_url: imageUrl });
+  }
+
+  return content;
 }
 
 function buildSystemPrompt(aiMode: AIMode, mode: 'chat' | 'diary') {

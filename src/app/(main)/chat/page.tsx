@@ -21,12 +21,14 @@ type MessageRecord = {
   thread_id: string;
   role: string;
   content: string;
+  image_url: string | null;
   created_at: string;
   mode: string | null;
 };
 
 type PendingRetry = {
   message: string;
+  imageUrl: string | null;
   userMessage: Message;
   activeMode: 'chat' | 'diary';
   aiMode: AIMode;
@@ -41,6 +43,8 @@ export default function ChatPage() {
   const [threads, setThreads] = useState<ThreadRecord[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingReply, setStreamingReply] = useState('');
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
+  const [selectedImagePreviewUrl, setSelectedImagePreviewUrl] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
@@ -54,7 +58,7 @@ export default function ChatPage() {
 
     const { data: messageRows, error: messagesError } = await supabase
       .from('messages')
-      .select('id, thread_id, role, content, created_at, mode')
+      .select('id, thread_id, role, content, image_url, created_at, mode')
       .eq('thread_id', targetThread.id)
       .order('created_at', { ascending: true });
 
@@ -146,6 +150,20 @@ export default function ChatPage() {
     void loadModeThread();
   }, [aiMode, threads, userId]);
 
+  useEffect(() => {
+    if (mode === 'diary') {
+      clearSelectedImage();
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    return () => {
+      if (selectedImagePreviewUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(selectedImagePreviewUrl);
+      }
+    };
+  }, [selectedImagePreviewUrl]);
+
   const refreshThreads = async () => {
     if (!userId) {
       return;
@@ -167,15 +185,64 @@ export default function ChatPage() {
     setThreads(threadList);
   };
 
+  const handlePickImage = (file: File | null) => {
+    if (!file) {
+      clearSelectedImage();
+      return;
+    }
+
+    if (!isAllowedImageType(file)) {
+      setErrorMessage('目前支持 PNG、JPG、WEBP 和 GIF 图片。');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMessage('图片请控制在 10MB 以内。');
+      return;
+    }
+
+    if (selectedImagePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedImagePreviewUrl);
+    }
+
+    setErrorMessage('');
+    setSelectedImageFile(file);
+    setSelectedImagePreviewUrl(URL.createObjectURL(file));
+  };
+
+  const clearSelectedImage = () => {
+    if (selectedImagePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedImagePreviewUrl);
+    }
+
+    setSelectedImageFile(null);
+    setSelectedImagePreviewUrl(null);
+  };
+
   const handleSend = async () => {
     const trimmedInput = input.trim();
+    const hasImage = Boolean(selectedImageFile);
 
-    if (!trimmedInput || !threadId || !userId) {
+    if ((!trimmedInput && !hasImage) || !threadId || !userId) {
       return;
     }
 
     setIsSending(true);
     setErrorMessage('');
+
+    let uploadedImageUrl: string | null = null;
+
+    if (selectedImageFile) {
+      const uploadResult = await uploadChatImage(selectedImageFile, userId);
+
+      if (!uploadResult.ok) {
+        setErrorMessage(uploadResult.error);
+        setIsSending(false);
+        return;
+      }
+
+      uploadedImageUrl = uploadResult.imageUrl;
+    }
 
     const activeMode = mode === 'chat' ? aiMode : 'diary';
 
@@ -186,9 +253,10 @@ export default function ChatPage() {
         user_id: userId,
         role: 'user',
         content: trimmedInput,
+        image_url: uploadedImageUrl,
         mode: activeMode,
       })
-      .select('id, thread_id, role, content, created_at, mode')
+      .select('id, thread_id, role, content, image_url, created_at, mode')
       .single();
 
     if (insertUserError) {
@@ -200,6 +268,7 @@ export default function ChatPage() {
     const userMessage = mapMessageRecord(insertedUserMessage);
     setMessages((current) => [...current, userMessage]);
     setInput('');
+    clearSelectedImage();
     setPendingRetry(null);
 
     if (mode === 'diary') {
@@ -236,6 +305,7 @@ export default function ChatPage() {
 
     const aiReply = await streamAIReply({
       message: trimmedInput,
+      imageUrl: uploadedImageUrl,
       aiMode,
       mode,
       messages: [...messages, userMessage],
@@ -245,6 +315,7 @@ export default function ChatPage() {
     if (!aiReply.ok) {
       setPendingRetry({
         message: trimmedInput,
+        imageUrl: uploadedImageUrl,
         userMessage,
         activeMode: mode,
         aiMode,
@@ -264,7 +335,7 @@ export default function ChatPage() {
         content: aiReply.reply,
         mode: activeMode,
       })
-      .select('id, thread_id, role, content, created_at, mode')
+      .select('id, thread_id, role, content, image_url, created_at, mode')
       .single();
 
     if (!insertAiError && insertedAiMessage) {
@@ -286,6 +357,7 @@ export default function ChatPage() {
 
     const aiReply = await streamAIReply({
       message: pendingRetry.message,
+      imageUrl: pendingRetry.imageUrl,
       aiMode: pendingRetry.aiMode,
       mode: pendingRetry.activeMode,
       messages: [...messages],
@@ -308,7 +380,7 @@ export default function ChatPage() {
         content: aiReply.reply,
         mode: pendingRetry.activeMode,
       })
-      .select('id, thread_id, role, content, created_at, mode')
+      .select('id, thread_id, role, content, image_url, created_at, mode')
       .single();
 
     if (!insertAiError && insertedAiMessage) {
@@ -420,7 +492,15 @@ export default function ChatPage() {
           </button>
         </div>
         {mode === 'chat' ? (
-          <ChatInput value={input} onChange={setInput} onSend={handleSend} disabled={isSending || isLoading} />
+          <ChatInput
+            value={input}
+            onChange={setInput}
+            onSend={handleSend}
+            imagePreviewUrl={selectedImagePreviewUrl}
+            onPickImage={handlePickImage}
+            onClearImage={clearSelectedImage}
+            disabled={isSending || isLoading}
+          />
         ) : (
           <DiaryTextArea value={input} onChange={setInput} onSubmit={handleSend} disabled={isSending || isLoading} />
         )}
@@ -435,6 +515,7 @@ function mapMessageRecord(record: MessageRecord): Message {
     threadId: record.thread_id,
     sender: record.role === 'user' ? 'user' : 'ai',
     content: record.content,
+    imageUrl: record.image_url,
     createdAt: record.created_at,
   };
 }
@@ -543,12 +624,14 @@ function detectEmotion(content: string): Message['emotion'] {
 
 async function streamAIReply({
   message,
+  imageUrl,
   messages,
   aiMode,
   mode,
   onDelta,
 }: {
   message: string;
+  imageUrl?: string | null;
   messages: Message[];
   aiMode: AIMode;
   mode: 'chat' | 'diary';
@@ -567,6 +650,7 @@ async function streamAIReply({
         },
         body: JSON.stringify({
           message,
+          imageUrl,
           messages,
           aiMode,
           mode,
@@ -618,6 +702,34 @@ async function streamAIReply({
 
   onDelta('');
   return { ok: false, error: lastError };
+}
+
+async function uploadChatImage(file: File, userId: string) {
+  const fileExtension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+  const safeExtension = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(fileExtension)
+    ? fileExtension
+    : 'jpg';
+  const path = `${userId}/${Date.now()}-${crypto.randomUUID()}.${safeExtension}`;
+
+  const { error } = await supabase.storage
+    .from('chat-images')
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type,
+    });
+
+  if (error) {
+    return { ok: false as const, error: `图片上传失败：${error.message}` };
+  }
+
+  const { data } = supabase.storage.from('chat-images').getPublicUrl(path);
+
+  return { ok: true as const, imageUrl: data.publicUrl };
+}
+
+function isAllowedImageType(file: File) {
+  return ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type);
 }
 
 function mapChatError(error: unknown) {
