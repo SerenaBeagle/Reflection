@@ -19,11 +19,19 @@ type DiaryEntryRecord = {
   source_message_id: string | null;
 };
 
+type ImageMessageRecord = {
+  id: string;
+  content: string;
+  image_url: string;
+  created_at: string;
+};
+
 export default function CalendarPage() {
   const today = new Date();
   const [viewDate, setViewDate] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [selected, setSelected] = useState(today.getDate());
   const [entries, setEntries] = useState<DiaryEntryRecord[]>([]);
+  const [imageMessages, setImageMessages] = useState<ImageMessageRecord[]>([]);
   const [userId, setUserId] = useState('');
   const [rangeStart, setRangeStart] = useState(() => formatDate(new Date()));
   const [rangeEnd, setRangeEnd] = useState(() => formatDate(new Date()));
@@ -58,6 +66,8 @@ export default function CalendarPage() {
 
       const monthStart = `${year}-${month.toString().padStart(2, '0')}-01`;
       const monthEnd = `${year}-${month.toString().padStart(2, '0')}-${days.toString().padStart(2, '0')}`;
+      const monthStartTime = `${monthStart}T00:00:00`;
+      const monthEndTime = `${monthEnd}T23:59:59.999`;
 
       const { data, error } = await supabase
         .from('diary_entries')
@@ -74,7 +84,24 @@ export default function CalendarPage() {
         return;
       }
 
+      const { data: imageData, error: imageError } = await supabase
+        .from('messages')
+        .select('id, content, image_url, created_at')
+        .eq('user_id', user.id)
+        .eq('role', 'user')
+        .not('image_url', 'is', null)
+        .gte('created_at', monthStartTime)
+        .lte('created_at', monthEndTime)
+        .order('created_at', { ascending: false });
+
+      if (imageError) {
+        setErrorMessage(imageError.message);
+        setIsLoading(false);
+        return;
+      }
+
       setEntries(data || []);
+      setImageMessages(((imageData || []).filter((item) => item.image_url) as ImageMessageRecord[]));
       setRangeStart(monthStart);
       setRangeEnd(monthEnd);
       setSelected((current) => Math.min(current, days));
@@ -291,9 +318,25 @@ export default function CalendarPage() {
     return map;
   }, [entries]);
 
+  const imageCountMap = useMemo(() => {
+    const map: Record<number, number> = {};
+
+    imageMessages.forEach((message) => {
+      const day = new Date(message.created_at).getDate();
+      map[day] = (map[day] || 0) + 1;
+    });
+
+    return map;
+  }, [imageMessages]);
+
   const selectedEntries = useMemo(
     () => entries.filter((entry) => parseInt(entry.entry_date.split('-')[2], 10) === selected),
     [entries, selected]
+  );
+
+  const selectedImages = useMemo(
+    () => imageMessages.filter((message) => new Date(message.created_at).getDate() === selected),
+    [imageMessages, selected]
   );
 
   const monthLabel = `${year} 年 ${month.toString().padStart(2, '0')} 月`;
@@ -336,6 +379,7 @@ export default function CalendarPage() {
                 key={day}
                 date={`${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`}
                 emotion={entry?.dominant_emotion ?? undefined}
+                imageCount={imageCountMap[day] || 0}
                 selected={selected === day}
                 onClick={() => setSelected(day)}
               />
@@ -355,7 +399,9 @@ export default function CalendarPage() {
               <div className="font-bold text-[color:var(--ikea-blue-deep)]">
                 {month.toString().padStart(2, '0')} 月 {selected.toString().padStart(2, '0')} 日
               </div>
-              <div className="text-xs text-gray-400">{entryCountMap[selected] || selectedEntries.length} 条日记</div>
+              <div className="text-xs text-gray-400">
+                {entryCountMap[selected] || selectedEntries.length} 条日记 · {imageCountMap[selected] || 0} 张图片
+              </div>
             </div>
             {selectedEntries.map((entry, index) => (
               <div key={entry.id} className="rounded-[24px] bg-[color:var(--surface)] p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
@@ -370,6 +416,60 @@ export default function CalendarPage() {
                 <div className="whitespace-pre-line text-sm text-gray-700">{entry.raw_text}</div>
               </div>
             ))}
+            {selectedImages.length > 0 ? (
+              <div className="rounded-[24px] bg-[color:var(--surface)] p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="font-bold text-[color:var(--ikea-blue-deep)]">当天分享的图片</div>
+                  <div className="text-xs text-gray-400">{selectedImages.length} 张</div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {selectedImages.map((image) => (
+                    <div key={image.id} className="overflow-hidden rounded-[20px] border border-[color:var(--border-subtle)] bg-white">
+                      <img
+                        src={image.image_url}
+                        alt="当天分享的图片"
+                        className="h-36 w-full object-cover"
+                      />
+                      <div className="px-3 py-2">
+                        <div className="text-xs text-gray-400">{formatClockTime(image.created_at)}</div>
+                        {image.content ? (
+                          <div className="mt-1 line-clamp-2 text-sm text-[color:var(--foreground)]">{image.content}</div>
+                        ) : (
+                          <div className="mt-1 text-sm text-[color:var(--slate)]">这张图片没有附带文字。</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : selectedImages.length > 0 ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between px-1">
+              <div className="font-bold text-[color:var(--ikea-blue-deep)]">
+                {month.toString().padStart(2, '0')} 月 {selected.toString().padStart(2, '0')} 日
+              </div>
+              <div className="text-xs text-gray-400">0 条日记 · {imageCountMap[selected] || selectedImages.length} 张图片</div>
+            </div>
+            <div className="rounded-[24px] bg-[color:var(--surface)] p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+              <div className="mb-3 font-bold text-[color:var(--ikea-blue-deep)]">当天分享的图片</div>
+              <div className="grid grid-cols-2 gap-3">
+                {selectedImages.map((image) => (
+                  <div key={image.id} className="overflow-hidden rounded-[20px] border border-[color:var(--border-subtle)] bg-white">
+                    <img src={image.image_url} alt="当天分享的图片" className="h-36 w-full object-cover" />
+                    <div className="px-3 py-2">
+                      <div className="text-xs text-gray-400">{formatClockTime(image.created_at)}</div>
+                      {image.content ? (
+                        <div className="mt-1 line-clamp-2 text-sm text-[color:var(--foreground)]">{image.content}</div>
+                      ) : (
+                        <div className="mt-1 text-sm text-[color:var(--slate)]">这张图片没有附带文字。</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         ) : (
           <div className="mt-8 text-center text-gray-400">这一天还没有日记哦～</div>
@@ -389,6 +489,12 @@ export default function CalendarPage() {
               href="/calendar/portraits"
             >
               浏览用户画像
+            </Link>
+            <Link
+              className="rounded-full border border-[color:var(--border-subtle)] bg-white px-4 py-3 text-center text-sm font-medium text-[color:var(--ikea-blue-deep)] transition hover:border-[color:var(--ikea-blue)]"
+              href="/calendar/album"
+            >
+              浏览相册
             </Link>
             <button
               className="rounded-full border border-[color:var(--ikea-blue)] bg-[color:var(--ikea-blue-soft)] px-4 py-3 text-sm font-medium text-[color:var(--ikea-blue-deep)] transition hover:bg-[color:var(--surface-muted)] disabled:opacity-50"
@@ -473,4 +579,11 @@ function buildKeywords(entries: Array<{ raw_text: string }>) {
 
 function buildMonthlyTitle(year: number, month: number) {
   return `${year} 年 ${month.toString().padStart(2, '0')} 月月度汇报`;
+}
+
+function formatClockTime(value: string) {
+  return new Date(value).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }

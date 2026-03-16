@@ -4,11 +4,12 @@ import { EmotionType } from '@/types/message';
 interface CalendarDayCellProps {
   date: string;
   emotion?: EmotionType;
+  imageCount?: number;
   selected?: boolean;
   onClick?: () => void;
 }
 
-export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({ date, emotion, selected, onClick }) => {
+export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({ date, emotion, imageCount = 0, selected, onClick }) => {
   const colorMap: Record<EmotionType, string> = {
     happy: 'bg-yellow-200',
     sad: 'bg-blue-100',
@@ -25,13 +26,16 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = ({ date, emotion,
   return (
     <button
       className={`w-10 h-10 flex flex-col items-center justify-center rounded-xl border transition
-        ${selected ? 'border-pink-400 shadow-lg' : 'border-transparent'}
+        ${selected ? 'border-[color:var(--ikea-blue)] shadow-lg' : 'border-transparent'}
         ${emotion ? colorMap[emotion] : 'bg-white'}`}
       onClick={onClick}
       type="button"
     >
       <span className="text-xs text-gray-700">{date.split('-')[2]}</span>
-      {emotion && <span className="w-2 h-2 rounded-full mt-1" style={{ background: 'rgba(255, 99, 132, 0.6)' }} />}
+      <div className="mt-1 flex items-center gap-1">
+        {emotion ? <span className="h-2 w-2 rounded-full bg-[color:var(--ikea-blue)]" /> : null}
+        {imageCount > 0 ? <span className="text-[10px] text-[color:var(--ikea-blue-deep)]">图</span> : null}
+      </div>
     </button>
   );
 };

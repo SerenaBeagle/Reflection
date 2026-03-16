@@ -436,14 +436,28 @@ export default function ChatPage() {
             <div className="mt-2 text-sm leading-6 text-[color:var(--slate)]">{roleProfile.emptyDescription}</div>
           </div>
         ) : (
-          messages.map((msg) => (
-            <ChatBubble
-              key={msg.id}
-              message={msg}
-              isUser={msg.sender === 'user'}
-              aiMode={aiMode}
-            />
-          ))
+          messages.map((msg, index) => {
+            const previousMessage = index > 0 ? messages[index - 1] : null;
+            const showTimeDivider =
+              !previousMessage ||
+              shouldShowTimeDivider(previousMessage.createdAt, msg.createdAt);
+
+            return (
+              <React.Fragment key={msg.id}>
+                {showTimeDivider ? (
+                  <div className="mb-3 text-center text-xs text-[color:var(--slate)]">
+                    {formatChatDivider(msg.createdAt)}
+                  </div>
+                ) : null}
+                <ChatBubble
+                  message={msg}
+                  isUser={msg.sender === 'user'}
+                  aiMode={aiMode}
+                  timeLabel={formatChatClock(msg.createdAt)}
+                />
+              </React.Fragment>
+            );
+          })
         )}
         {streamingReply ? (
           <ChatBubble
@@ -457,6 +471,7 @@ export default function ChatPage() {
             }}
             isUser={false}
             aiMode={aiMode}
+            timeLabel={formatChatClock(new Date().toISOString())}
           />
         ) : null}
         {isSending && !streamingReply ? (
@@ -730,6 +745,48 @@ async function uploadChatImage(file: File, userId: string) {
 
 function isAllowedImageType(file: File) {
   return ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type);
+}
+
+function shouldShowTimeDivider(previous: string, current: string) {
+  const previousTime = new Date(previous).getTime();
+  const currentTime = new Date(current).getTime();
+  const fiveMinutes = 5 * 60 * 1000;
+
+  return currentTime - previousTime >= fiveMinutes || !isSameDay(previous, current);
+}
+
+function isSameDay(left: string, right: string) {
+  const leftDate = new Date(left);
+  const rightDate = new Date(right);
+
+  return (
+    leftDate.getFullYear() === rightDate.getFullYear() &&
+    leftDate.getMonth() === rightDate.getMonth() &&
+    leftDate.getDate() === rightDate.getDate()
+  );
+}
+
+function formatChatDivider(value: string) {
+  const date = new Date(value);
+  const now = new Date();
+
+  if (isSameDay(value, now.toISOString())) {
+    return `今天 ${formatChatClock(value)}`;
+  }
+
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatChatClock(value: string) {
+  return new Date(value).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function mapChatError(error: unknown) {

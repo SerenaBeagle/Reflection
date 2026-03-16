@@ -8,6 +8,7 @@ interface ChatBubbleProps {
   message: Message;
   isUser: boolean;
   aiMode?: AIMode;
+  timeLabel?: string;
 }
 
 const MODE_STYLES: Record<AIMode, { bubble: string; avatar: string; label: string }> = {
@@ -33,7 +34,7 @@ const MODE_STYLES: Record<AIMode, { bubble: string; avatar: string; label: strin
   },
 };
 
-export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isUser, aiMode = 'gentle-listener' }) => {
+export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isUser, aiMode = 'gentle-listener', timeLabel }) => {
   const modeStyle = MODE_STYLES[aiMode];
 
   return (
@@ -58,7 +59,12 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isUser, aiMode 
             className="mb-3 max-h-72 w-full rounded-2xl object-cover"
           />
         ) : null}
-        {message.content}
+        {message.content ? <div>{message.content}</div> : null}
+        {timeLabel ? (
+          <div className={cn('mt-2 text-[11px]', isUser ? 'text-white/70 text-right' : 'text-[#60758b]')}>
+            {timeLabel}
+          </div>
+        ) : null}
       </div>
       {isUser && (
         <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[color:var(--surface-muted)]">
