@@ -1,8 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f3f7fb;
+  --foreground: #1f2933;
+  --surface: #fbfdff;
+  --surface-muted: #e7eef5;
+  --border-subtle: #d4dee8;
+  --ikea-blue: #0058a3;
+  --ikea-blue-deep: #003b6f;
+  --ikea-blue-soft: #dbe9f6;
+  --ice-blue: #edf4fa;
+  --ikea-yellow: #ffda1a;
+  --ikea-yellow-soft: #fff1a6;
+  --sage: #dbe5dc;
+  --slate: #667085;
 }
 
 @theme inline {
@@ -12,15 +23,22 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "Avenir Next", "Segoe UI", sans-serif;
+  background-image:
+    radial-gradient(circle at top left, rgba(0, 88, 163, 0.08), transparent 26%),
+    radial-gradient(circle at top right, rgba(0, 88, 163, 0.05), transparent 30%);
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(0, 88, 163, 0.18);
 }
