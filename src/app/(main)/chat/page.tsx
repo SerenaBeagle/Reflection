@@ -198,6 +198,38 @@ export default function ChatPage() {
       }
 
       if (!activeThread) {
+        const legacyGenericThread =
+          threads.find((thread) => thread.title && !thread.title.startsWith('mode::')) ||
+          threads.find((thread) => !thread.title) ||
+          null;
+
+        if (legacyGenericThread) {
+          const updatedLegacyThread = {
+            ...legacyGenericThread,
+            title: targetTitle,
+          };
+
+          const { error: updateThreadError } = await supabase
+            .from('chat_threads')
+            .update({ title: targetTitle })
+            .eq('id', legacyGenericThread.id);
+
+          if (updateThreadError) {
+            setErrorMessage(updateThreadError.message);
+            setIsLoading(false);
+            return;
+          }
+
+          activeThread = updatedLegacyThread;
+          setThreads((current) =>
+            current.map((thread) =>
+              thread.id === updatedLegacyThread.id ? updatedLegacyThread : thread
+            )
+          );
+        }
+      }
+
+      if (!activeThread) {
         const { data: newThread, error } = await supabase
           .from('chat_threads')
           .insert({
