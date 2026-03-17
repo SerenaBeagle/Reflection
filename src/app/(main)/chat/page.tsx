@@ -122,6 +122,82 @@ export default function ChatPage() {
       let activeThread = threads.find((thread) => thread.title === targetTitle) || null;
 
       if (!activeThread) {
+        const { data: legacyMessage, error: legacyMessageError } = await supabase
+          .from('messages')
+          .select('thread_id, created_at')
+          .eq('user_id', userId)
+          .eq('mode', aiMode)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (legacyMessageError) {
+          setErrorMessage(legacyMessageError.message);
+          setIsLoading(false);
+          return;
+        }
+
+        if (legacyMessage?.thread_id) {
+          const existingLegacyThread = threads.find((thread) => thread.id === legacyMessage.thread_id) || null;
+
+          if (existingLegacyThread) {
+            const updatedLegacyThread = {
+              ...existingLegacyThread,
+              title: targetTitle,
+            };
+
+            const { error: updateThreadError } = await supabase
+              .from('chat_threads')
+              .update({ title: targetTitle })
+              .eq('id', existingLegacyThread.id);
+
+            if (updateThreadError) {
+              setErrorMessage(updateThreadError.message);
+              setIsLoading(false);
+              return;
+            }
+
+            activeThread = updatedLegacyThread;
+            setThreads((current) =>
+              current.map((thread) =>
+                thread.id === updatedLegacyThread.id ? updatedLegacyThread : thread
+              )
+            );
+          } else {
+            const { data: fetchedLegacyThread, error: fetchLegacyThreadError } = await supabase
+              .from('chat_threads')
+              .select('id, title, updated_at')
+              .eq('id', legacyMessage.thread_id)
+              .single();
+
+            if (fetchLegacyThreadError) {
+              setErrorMessage(fetchLegacyThreadError.message);
+              setIsLoading(false);
+              return;
+            }
+
+            const { error: updateThreadError } = await supabase
+              .from('chat_threads')
+              .update({ title: targetTitle })
+              .eq('id', fetchedLegacyThread.id);
+
+            if (updateThreadError) {
+              setErrorMessage(updateThreadError.message);
+              setIsLoading(false);
+              return;
+            }
+
+            activeThread = {
+              ...fetchedLegacyThread,
+              title: targetTitle,
+            };
+
+            setThreads((current) => [activeThread!, ...current.filter((thread) => thread.id !== activeThread!.id)]);
+          }
+        }
+      }
+
+      if (!activeThread) {
         const { data: newThread, error } = await supabase
           .from('chat_threads')
           .insert({
