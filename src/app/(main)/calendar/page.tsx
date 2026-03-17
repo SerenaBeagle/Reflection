@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AppHeader } from '@/components/AppHeader';
 import { CalendarDayCell } from '@/components/CalendarDayCell';
+import { requestPortraitSummary } from '@/frontend/api/portrait-api';
 import { supabase } from '@/lib/supabase/client';
 import { formatDate } from '@/lib/diary-insights';
 import { EmotionType } from '@/types/message';
@@ -140,27 +141,19 @@ export default function CalendarPage() {
       return;
     }
 
-    const response = await fetch('/api/profile-portrait', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        entries: data,
-        startDate: rangeStart,
-        endDate: rangeEnd,
-      }),
+    const { ok, payload } = await requestPortraitSummary({
+      entries: data,
+      startDate: rangeStart,
+      endDate: rangeEnd,
     });
-
-    const payload = await response.json();
     setIsGeneratingPortrait(false);
 
-    if (!response.ok) {
-      setPortraitError(payload?.error || '生成用户画像失败。');
+    if (!ok) {
+      setPortraitError('error' in payload ? payload.error : '生成用户画像失败。');
       return;
     }
 
-    const summary = payload.summary || '';
+    const summary = 'summary' in payload ? payload.summary || '' : '';
     setPortraitSummary(summary);
 
     const { error: saveError } = await supabase
@@ -215,27 +208,19 @@ export default function CalendarPage() {
       return;
     }
 
-    const response = await fetch('/api/profile-portrait', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        entries: data,
-        startDate: monthStart,
-        endDate: monthEnd,
-      }),
+    const { ok, payload } = await requestPortraitSummary({
+      entries: data,
+      startDate: monthStart,
+      endDate: monthEnd,
     });
-
-    const payload = await response.json();
     setIsGeneratingMonthly(false);
 
-    if (!response.ok) {
-      setPortraitError(payload?.error || '生成月度汇报失败。');
+    if (!ok) {
+      setPortraitError('error' in payload ? payload.error : '生成月度汇报失败。');
       return;
     }
 
-    const summary = payload.summary || '';
+    const summary = 'summary' in payload ? payload.summary || '' : '';
     setPortraitSummary(summary);
 
     const { data: existingMonthly, error: existingError } = await supabase

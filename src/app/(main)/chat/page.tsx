@@ -6,6 +6,7 @@ import { ChatBubble } from '@/components/ChatBubble';
 import { ChatInput } from '@/components/ChatInput';
 import { ModeSelector } from '@/components/ModeSelector';
 import { DiaryTextArea } from '@/components/DiaryTextArea';
+import { requestChatStream } from '@/frontend/api/chat-api';
 import { AIMode } from '@/types/user';
 import { Message } from '@/types/message';
 import { supabase } from '@/lib/supabase/client';
@@ -326,20 +327,24 @@ export default function ChatPage() {
       return;
     }
 
-    const { data: insertedAiMessage, error: insertAiError } = await supabase
-      .from('messages')
-      .insert({
-        thread_id: threadId,
-        user_id: userId,
-        role: 'assistant',
-        content: aiReply.reply,
-        mode: activeMode,
-      })
-      .select('id, thread_id, role, content, image_url, created_at, mode')
-      .single();
+    const aiMessageParts = splitAssistantReply(aiReply.reply);
 
-    if (!insertAiError && insertedAiMessage) {
-      setMessages((current) => [...current, mapMessageRecord(insertedAiMessage)]);
+    const { data: insertedAiMessages, error: insertAiError } = await supabase
+      .from('messages')
+      .insert(
+        aiMessageParts.map((content) => ({
+          thread_id: threadId,
+          user_id: userId,
+          role: 'assistant',
+          content,
+          mode: activeMode,
+        }))
+      )
+      .select('id, thread_id, role, content, image_url, created_at, mode')
+      .order('created_at', { ascending: true });
+
+    if (!insertAiError && insertedAiMessages?.length) {
+      setMessages((current) => [...current, ...insertedAiMessages.map(mapMessageRecord)]);
     }
 
     setStreamingReply('');
@@ -371,20 +376,24 @@ export default function ChatPage() {
       return;
     }
 
-    const { data: insertedAiMessage, error: insertAiError } = await supabase
-      .from('messages')
-      .insert({
-        thread_id: threadId,
-        user_id: userId,
-        role: 'assistant',
-        content: aiReply.reply,
-        mode: pendingRetry.activeMode,
-      })
-      .select('id, thread_id, role, content, image_url, created_at, mode')
-      .single();
+    const aiMessageParts = splitAssistantReply(aiReply.reply);
 
-    if (!insertAiError && insertedAiMessage) {
-      setMessages((current) => [...current, mapMessageRecord(insertedAiMessage)]);
+    const { data: insertedAiMessages, error: insertAiError } = await supabase
+      .from('messages')
+      .insert(
+        aiMessageParts.map((content) => ({
+          thread_id: threadId,
+          user_id: userId,
+          role: 'assistant',
+          content,
+          mode: pendingRetry.activeMode,
+        }))
+      )
+      .select('id, thread_id, role, content, image_url, created_at, mode')
+      .order('created_at', { ascending: true });
+
+    if (!insertAiError && insertedAiMessages?.length) {
+      setMessages((current) => [...current, ...insertedAiMessages.map(mapMessageRecord)]);
       setPendingRetry(null);
     } else if (insertAiError) {
       setErrorMessage('AI 已经生成回复，但保存到聊天记录时失败了。请稍后再试。');
@@ -540,6 +549,39 @@ function buildDiarySummary(content: string) {
   return trimmed.length > 36 ? `${trimmed.slice(0, 36)}...` : trimmed;
 }
 
+function splitAssistantReply(reply: string) {
+  const normalized = reply
+    .replace(/\r/g, '')
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (normalized.length > 1) {
+    return normalized.slice(0, 3);
+  }
+
+  const single = reply.trim();
+
+  if (!single) {
+    return ['嗯，我在。'];
+  }
+
+  if (single.length <= 38) {
+    return [single];
+  }
+
+  const chunks = single
+    .split(/(?<=[。！？~])\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (chunks.length > 1) {
+    return chunks.slice(0, 3);
+  }
+
+  return [single];
+}
+
 function buildModeThreadTitle(mode: AIMode) {
   return `mode::${mode}`;
 }
@@ -658,18 +700,12 @@ async function streamAIReply({
     try {
       onDelta('');
 
-      const aiResponse = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message,
-          imageUrl,
-          messages,
-          aiMode,
-          mode,
-        }),
+      const aiResponse = await requestChatStream({
+        message,
+        imageUrl,
+        messages,
+        aiMode,
+        mode,
       });
 
       if (!aiResponse.ok || !aiResponse.body) {

@@ -1,74 +1,82 @@
-# Reflection — AI Diary App (Frontend Prototype)
+# Reflection
 
-## 项目简介
+Reflection 是一个以日记、陪伴式聊天和用户画像为核心的情绪陪伴应用，当前 Web 端基于 Next.js、Supabase 和 OpenAI 构建。
 
-Reflection 是一个以 Next.js 14、TypeScript、Tailwind CSS、shadcn/ui 和 lucide-react 打造的移动优先、情感温暖的 AI 日记应用前端原型。它模拟了与 AI 好友的微信式聊天体验，专为年轻用户打造，注重隐私与情感陪伴。
+## 当前分层
 
-## 技术栈
-- Next.js 14 (App Router)
-- TypeScript
-- Tailwind CSS
-- shadcn/ui
-- lucide-react
+为了方便后续迁移到 iOS，项目已经开始按「前端 / 后端 / 共享契约」分开：
 
-## 目录结构
+- `src/app`
+  Next.js 页面、路由和 API 入口
+- `src/components`
+  Web 前端 UI 组件
+- `src/frontend`
+  前端接口调用层，负责和后端 API 交互
+- `src/backend`
+  后端服务逻辑，例如 OpenAI 调用和业务编排
+- `src/shared`
+  前后端共用的接口契约和请求/响应类型
+- `src/lib`
+  通用工具、Supabase 客户端、聚合逻辑
+- `supabase`
+  数据表、RLS、Storage 相关 SQL
 
-```
-src/
-	app/
-		(auth)/         # 登录、注册页
-		(main)/         # 主应用区
-			chat/         # 聊天页
-			calendar/     # 日历页
-			insights/     # 情感洞察页
-			profile/      # 个人/设置页
-			summary/      # 首页/摘要页
-	components/       # 可复用 UI 组件
-	features/         # 业务功能模块
-	mock/             # Mock 数据
-	types/            # TypeScript 类型
-```
+## 现在的后端入口
 
-## 页面/功能
-- 登录/注册
-- 聊天（AI 多模式、日记输入、气泡、输入框、模式选择、打字指示等）
-- 摘要/首页（本周总结、情绪、人物/主题标签、亮点等）
-- 日历（情绪色点、日记摘要卡片）
-- 情感洞察（趋势、情绪 pill、图表、主题等）
-- 个人/设置（昵称、AI 偏好、主题、隐私、导出等）
+- `src/backend/services/chat-service.ts`
+  聊天和图片识别相关的 OpenAI 调用逻辑
+- `src/backend/services/portrait-service.ts`
+  用户画像和月度汇报生成逻辑
 
-## 组件
-- ChatBubble
-- ChatInput
-- ModeSelector
-- DiaryTextArea
-- SummaryCard
-- EmotionBadge
-- CalendarDayCell
-- InsightCard
-- BottomNav
-- SidebarNav
-- AppHeader
+当前 `src/app/api/*` 只是薄适配层。这样以后如果你要：
 
-## Mock 数据
-- 用户、消息、日记、摘要、情绪趋势等，见 `src/mock/`
+- 拆成独立 Node 后端
+- 迁移到 Supabase Edge Functions
+- 给 iOS/Android 共用同一套接口
 
-## 设计风格
-- 移动优先，圆角卡片，柔和阴影，暖色/中性色，极简，安全私密，现代女性友好
+都会更容易。
 
-## 如何连接 Supabase + AI 后端？
-- 你可以将 mock 数据替换为 API 请求（如 `fetch('/api/messages')`），并用 React Query/SWR 管理数据。
-- 用户登录/注册可对接 Supabase Auth。
-- 聊天/日记/情绪等可通过 Supabase 数据库存储。
-- AI 回复可通过调用自定义 API 路由（如 `/api/ai-reply`），后端可集成 OpenAI/Claude 等大模型。
-- 组件和 hooks 已按“可插拔”方式设计，便于后续对接。
+## iOS 迁移建议
 
-## 启动项目
+后续做 iOS 时，推荐方案是：
+
+1. 新建 Expo / React Native 前端
+2. 继续复用当前 Supabase 项目和数据库结构
+3. 复用 `src/shared` 的接口契约
+4. 逐步把 `src/backend/services` 搬到独立后端或 Edge Functions
+
+这样你不用重做数据库和业务规则，只需要换前端实现。
+
+## 主要功能
+
+- 注册 / 登录 / 退出
+- AI 陪伴聊天
+- 图片上传与识图回复
+- 日记模式
+- 日历查看
+- 用户画像与月度汇报
+- 相册总览
+
+## 本地开发
+
 ```bash
 npm install
 npm run dev
 ```
 
----
+打开 `http://localhost:3000`
 
-> 本项目为前端原型，所有数据均为 mock，欢迎二次开发！
+## 类型检查
+
+```bash
+npx tsc --noEmit
+```
+
+## 部署环境变量
+
+在 Vercel 或其他部署平台中配置：
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
