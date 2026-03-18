@@ -80,3 +80,16 @@ npx tsc --noEmit
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL`
+
+### 可选：切换 AI 后端入口
+
+默认前端走 Next.js API 路由。
+
+如果后续要切到 Supabase Edge Functions，可以增加：
+
+- `NEXT_PUBLIC_BACKEND_TARGET=edge`
+
+当前支持切换的入口：
+
+- `chat`
+- `profile-portrait`

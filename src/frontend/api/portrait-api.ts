@@ -3,17 +3,31 @@ import {
   PortraitRequestBody,
   PortraitSuccessResponse,
 } from '@/shared/api/portrait';
+import {
+  getEdgeFunctionHeaders,
+  getEdgeFunctionUrl,
+  useEdgeFunctions,
+} from '@/frontend/api/backend-config';
 
 export async function requestPortraitSummary(body: PortraitRequestBody) {
-  const response = await fetch('/api/profile-portrait', {
+  const url = useEdgeFunctions() ? getEdgeFunctionUrl('profile-portrait') : '/api/profile-portrait';
+  const headers = useEdgeFunctions()
+    ? getEdgeFunctionHeaders()
+    : {
+        'Content-Type': 'application/json',
+      };
+
+  const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body),
   });
 
-  const payload = (await response.json()) as PortraitSuccessResponse | PortraitErrorResponse;
+  const payload = useEdgeFunctions()
+    ? response.ok
+      ? ({ summary: await response.text() } as PortraitSuccessResponse | PortraitErrorResponse)
+      : ((await response.json()) as PortraitSuccessResponse | PortraitErrorResponse)
+    : ((await response.json()) as PortraitSuccessResponse | PortraitErrorResponse);
 
   return {
     ok: response.ok,
