@@ -53,22 +53,50 @@ export default function ChatPage() {
   const [pendingRetry, setPendingRetry] = useState<PendingRetry | null>(null);
   const roleProfile = ROLE_PROFILES[aiMode];
 
-  async function loadThreadMessages(targetThread: ThreadRecord) {
+  async function loadThreadMessages(targetThread: ThreadRecord, currentThreads: ThreadRecord[], currentUserId: string) {
     setThreadId(targetThread.id);
     setThreadTitle(getModeLabel(parseThreadMode(targetThread.title)));
 
-    const { data: messageRows, error: messagesError } = await supabase
+    const targetMode = parseThreadMode(targetThread.title);
+    const relatedThreadIds = Array.from(
+      new Set(
+        currentThreads
+          .filter((thread) => thread.title === buildModeThreadTitle(targetMode))
+          .map((thread) => thread.id)
+          .concat(targetThread.id)
+      )
+    );
+
+    const { data: threadMessageRows, error: threadMessagesError } = await supabase
       .from('messages')
       .select('id, thread_id, role, content, image_url, created_at, mode')
-      .eq('thread_id', targetThread.id)
+      .eq('user_id', currentUserId)
+      .in('thread_id', relatedThreadIds)
       .order('created_at', { ascending: true });
 
-    if (messagesError) {
-      setErrorMessage(messagesError.message);
+    if (threadMessagesError) {
+      setErrorMessage(threadMessagesError.message);
       return;
     }
 
-    setMessages((messageRows || []).map(mapMessageRecord));
+    const { data: modeMessageRows, error: modeMessagesError } = await supabase
+      .from('messages')
+      .select('id, thread_id, role, content, image_url, created_at, mode')
+      .eq('user_id', currentUserId)
+      .eq('mode', targetMode)
+      .order('created_at', { ascending: true });
+
+    if (modeMessagesError) {
+      setErrorMessage(modeMessagesError.message);
+      return;
+    }
+
+    const mergedMessages = [...(threadMessageRows || []), ...(modeMessageRows || [])];
+    const dedupedMessages = Array.from(
+      new Map(mergedMessages.map((message) => [message.id, message])).values()
+    ).sort((left, right) => left.created_at.localeCompare(right.created_at));
+
+    setMessages(dedupedMessages.map(mapMessageRecord));
   }
 
   useEffect(() => {
@@ -252,7 +280,7 @@ export default function ChatPage() {
         });
       }
 
-      await loadThreadMessages(activeThread);
+      await loadThreadMessages(activeThread, threads, userId);
       setIsLoading(false);
     };
 
