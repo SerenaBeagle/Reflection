@@ -496,8 +496,6 @@ export default function ChatPage() {
         };
       }
 
-      void playAudioBlob(speechResult.blob);
-
       return {
         ok: true as const,
         messages: [mapMessageRecord(insertedAiMessage)],
@@ -613,7 +611,6 @@ export default function ChatPage() {
       aiMode,
       mode: 'chat',
       messages: [...messages, userMessage],
-      onDelta: setStreamingReply,
     });
 
     if (!aiReply.ok) {
@@ -627,7 +624,6 @@ export default function ChatPage() {
       });
       setErrorMessage(aiReply.error);
       setIsSending(false);
-      setStreamingReply('');
       return;
     }
 
@@ -648,12 +644,10 @@ export default function ChatPage() {
       });
       setErrorMessage(persistResult.error);
       setIsSending(false);
-      setStreamingReply('');
       return;
     }
 
     setMessages((current) => [...current, ...persistResult.messages]);
-    setStreamingReply('');
     setIsSending(false);
   };
 
@@ -1344,13 +1338,13 @@ async function streamAIReply({
   messages: Message[];
   aiMode: AIMode;
   mode: 'chat' | 'diary';
-  onDelta: (value: string) => void;
+  onDelta?: (value: string) => void;
 }): Promise<{ ok: true; reply: string } | { ok: false; error: string }> {
   let lastError = '现在网络有点慢，我们暂时没接到回复。';
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      onDelta('');
+      onDelta?.('');
 
       const aiResponse = await requestChatStream({
         message,
@@ -1389,7 +1383,7 @@ async function streamAIReply({
         }
 
         aiReply += chunk;
-        onDelta(aiReply);
+        onDelta?.(aiReply);
       }
 
       if (!aiReply.trim()) {
@@ -1403,7 +1397,7 @@ async function streamAIReply({
     }
   }
 
-  onDelta('');
+  onDelta?.('');
   return { ok: false, error: lastError };
 }
 
@@ -1475,21 +1469,6 @@ async function measureAudioDuration(blob: Blob) {
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
-}
-
-async function playAudioBlob(blob: Blob) {
-  const objectUrl = URL.createObjectURL(blob);
-  const audio = new Audio(objectUrl);
-
-  try {
-    await audio.play();
-  } catch {
-    // Ignore autoplay failures and let the user play from the message bubble.
-  }
-
-  audio.addEventListener('ended', () => {
-    URL.revokeObjectURL(objectUrl);
-  });
 }
 
 function isAllowedImageType(file: File) {

@@ -2,7 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import { Message } from '@/types/message';
-import { AudioLines, Pause, Play, UserCircle } from 'lucide-react';
+import { Pause, Play, UserCircle } from 'lucide-react';
 import React from 'react';
 import { AIMode } from '@/types/user';
 
@@ -59,6 +59,9 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isUser, aiMode 
 
   const hasAudio = Boolean(message.audioUrl);
   const transcriptText = message.transcript?.trim() || message.content?.trim() || '';
+  const bubbleClass = isUser
+    ? 'rounded-br-md bg-[color:var(--ikea-blue-deep)] text-white'
+    : `rounded-bl-md ${modeStyle.bubble}`;
 
   const handleToggleAudio = () => {
     if (!message.audioUrl) {
@@ -107,9 +110,8 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isUser, aiMode 
       <div
         className={cn(
           'max-w-[72vw] rounded-[22px] px-4 py-3 text-[15px] leading-6 shadow-sm whitespace-pre-line md:max-w-md',
-          isUser
-            ? 'rounded-br-md bg-[color:var(--ikea-blue-deep)] text-white'
-            : `rounded-bl-md ${modeStyle.bubble}`,
+          bubbleClass,
+          hasAudio ? 'min-w-[210px]' : '',
         )}
         onContextMenu={(event) => {
           if (!hasAudio || !transcriptText) {
@@ -131,32 +133,33 @@ export const ChatBubble: React.FC<ChatBubbleProps> = ({ message, isUser, aiMode 
           />
         ) : null}
         {hasAudio ? (
-          <button
-            type="button"
-            onClick={handleToggleAudio}
-            className={cn(
-              'flex min-w-[172px] items-center gap-3 rounded-2xl px-3 py-2 text-left transition',
-              isUser ? 'bg-white/12 hover:bg-white/18' : 'bg-white/70 hover:bg-white'
-            )}
-          >
-            <span
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleToggleAudio}
               className={cn(
-                'flex h-9 w-9 items-center justify-center rounded-full',
-                isUser ? 'bg-white/18' : 'bg-[color:var(--ikea-blue)] text-white'
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition',
+                isUser ? 'bg-white/18 hover:bg-white/24' : 'bg-white text-[color:var(--ikea-blue)] hover:bg-[#f8fbff]'
               )}
+              aria-label={isPlaying ? '暂停语音' : '播放语音'}
             >
               {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-            </span>
-            <span className="flex-1">
-              <span className="flex items-center gap-2 text-sm font-medium">
-                <AudioLines className="h-4 w-4" />
-                语音消息
-              </span>
-              <span className={cn('mt-1 block text-xs', isUser ? 'text-white/80' : 'text-[#60758b]')}>
+            </button>
+            <div className="flex flex-1 items-center gap-2">
+              <div className="flex flex-1 items-center gap-1.5">
+                <span className={cn('h-2.5 w-1 rounded-full', isUser ? 'bg-white/40' : 'bg-[color:var(--ikea-blue)]/30')} />
+                <span className={cn('h-4 w-1 rounded-full', isUser ? 'bg-white/60' : 'bg-[color:var(--ikea-blue)]/45')} />
+                <span className={cn('h-6 w-1 rounded-full', isUser ? 'bg-white/85' : 'bg-[color:var(--ikea-blue)]/70')} />
+                <span className={cn('h-4 w-1 rounded-full', isUser ? 'bg-white/60' : 'bg-[color:var(--ikea-blue)]/45')} />
+                <span className={cn('h-2.5 w-1 rounded-full', isUser ? 'bg-white/40' : 'bg-[color:var(--ikea-blue)]/30')} />
+                <span className={cn('h-5 w-1 rounded-full', isUser ? 'bg-white/70' : 'bg-[color:var(--ikea-blue)]/55')} />
+                <span className={cn('h-3 w-1 rounded-full', isUser ? 'bg-white/45' : 'bg-[color:var(--ikea-blue)]/35')} />
+              </div>
+              <div className={cn('shrink-0 text-sm font-medium', isUser ? 'text-white/92' : 'text-[color:var(--ikea-blue-deep)]')}>
                 {formatAudioDuration(message.audioDurationSeconds)}
-              </span>
-            </span>
-          </button>
+              </div>
+            </div>
+          </div>
         ) : message.content ? (
           <div>{message.content}</div>
         ) : null}
