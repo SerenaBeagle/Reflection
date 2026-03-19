@@ -32,7 +32,10 @@ export async function createRealtimeCall(sdp: string, aiMode: AIMode) {
       audio: {
         input: {
           turn_detection: {
-            type: 'server_vad',
+            type: 'semantic_vad',
+            eagerness: 'low',
+            create_response: true,
+            interrupt_response: false,
           },
           transcription: {
             model: 'gpt-4o-mini-transcribe',

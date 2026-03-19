@@ -9,6 +9,7 @@ import { ModeSelector } from '@/components/ModeSelector';
 import { DiaryTextArea } from '@/components/DiaryTextArea';
 import { requestChatStream } from '@/frontend/api/chat-api';
 import { requestRealtimeSession } from '@/frontend/api/realtime-api';
+import { requestSpeechAudio } from '@/frontend/api/speech-api';
 import { requestTranscription } from '@/frontend/api/transcribe-api';
 import { AIMode } from '@/types/user';
 import { Message } from '@/types/message';
@@ -26,6 +27,10 @@ type MessageRecord = {
   role: string;
   content: string;
   image_url: string | null;
+  audio_url: string | null;
+  audio_duration_seconds: number | null;
+  transcript: string | null;
+  message_kind: 'text' | 'audio' | null;
   created_at: string;
   mode: string | null;
 };
@@ -36,6 +41,7 @@ type PendingRetry = {
   userMessage: Message;
   activeMode: 'chat' | 'diary';
   aiMode: AIMode;
+  asAudioReply?: boolean;
 };
 
 export default function ChatPage() {
@@ -64,6 +70,7 @@ export default function ChatPage() {
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const recordedChunksRef = React.useRef<Blob[]>([]);
   const recordingStreamRef = React.useRef<MediaStream | null>(null);
+  const recordingStartedAtRef = React.useRef<number | null>(null);
   const peerConnectionRef = React.useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = React.useRef<RTCDataChannel | null>(null);
   const remoteAudioRef = React.useRef<HTMLAudioElement | null>(null);
@@ -85,6 +92,7 @@ export default function ChatPage() {
     mediaRecorderRef.current = null;
     recordingStreamRef.current = null;
     recordedChunksRef.current = [];
+    recordingStartedAtRef.current = null;
     setIsRecording(false);
   };
 
@@ -136,7 +144,7 @@ export default function ChatPage() {
 
     const { data: threadMessageRows, error: threadMessagesError } = await supabase
       .from('messages')
-      .select('id, thread_id, role, content, image_url, created_at, mode')
+      .select('id, thread_id, role, content, image_url, audio_url, audio_duration_seconds, transcript, message_kind, created_at, mode')
       .eq('user_id', currentUserId)
       .in('thread_id', relatedThreadIds)
       .order('created_at', { ascending: true });
@@ -148,7 +156,7 @@ export default function ChatPage() {
 
     const { data: modeMessageRows, error: modeMessagesError } = await supabase
       .from('messages')
-      .select('id, thread_id, role, content, image_url, created_at, mode')
+      .select('id, thread_id, role, content, image_url, audio_url, audio_duration_seconds, transcript, message_kind, created_at, mode')
       .eq('user_id', currentUserId)
       .eq('mode', targetMode)
       .order('created_at', { ascending: true });
@@ -426,6 +434,229 @@ export default function ChatPage() {
     setSelectedImagePreviewUrl(URL.createObjectURL(file));
   };
 
+  const persistAssistantReply = async ({
+    reply,
+    activeMode,
+    asAudio,
+  }: {
+    reply: string;
+    activeMode: AIMode | 'diary';
+    asAudio: boolean;
+  }) => {
+    if (!threadId || !userId) {
+      return {
+        ok: false as const,
+        error: '聊天线程暂时不可用，请刷新后重试。',
+      };
+    }
+
+    if (asAudio) {
+      const speechResult = await requestSpeechAudio(reply);
+
+      if (!speechResult.ok) {
+        return {
+          ok: false as const,
+          error: speechResult.error,
+        };
+      }
+
+      const audioDurationSeconds = await measureAudioDuration(speechResult.blob);
+      const audioFile = new File([speechResult.blob], `assistant-${Date.now()}.mp3`, {
+        type: speechResult.blob.type || 'audio/mpeg',
+      });
+      const uploadResult = await uploadChatAudio(audioFile, userId);
+
+      if (!uploadResult.ok) {
+        return {
+          ok: false as const,
+          error: uploadResult.error,
+        };
+      }
+
+      const { data: insertedAiMessage, error: insertAiError } = await supabase
+        .from('messages')
+        .insert({
+          thread_id: threadId,
+          user_id: userId,
+          role: 'assistant',
+          content: reply,
+          transcript: reply,
+          audio_url: uploadResult.audioUrl,
+          audio_duration_seconds: audioDurationSeconds,
+          message_kind: 'audio',
+          mode: activeMode,
+        })
+        .select('id, thread_id, role, content, image_url, audio_url, audio_duration_seconds, transcript, message_kind, created_at, mode')
+        .single();
+
+      if (insertAiError || !insertedAiMessage) {
+        return {
+          ok: false as const,
+          error: 'AI 已经生成语音回复，但保存到聊天记录时失败了。',
+        };
+      }
+
+      void playAudioBlob(speechResult.blob);
+
+      return {
+        ok: true as const,
+        messages: [mapMessageRecord(insertedAiMessage)],
+      };
+    }
+
+    const aiMessageParts = splitAssistantReply(reply);
+
+    const { data: insertedAiMessages, error: insertAiError } = await supabase
+      .from('messages')
+      .insert(
+        aiMessageParts.map((content) => ({
+          thread_id: threadId,
+          user_id: userId,
+          role: 'assistant',
+          content,
+          mode: activeMode,
+        }))
+      )
+      .select('id, thread_id, role, content, image_url, audio_url, audio_duration_seconds, transcript, message_kind, created_at, mode')
+      .order('created_at', { ascending: true });
+
+    if (insertAiError || !insertedAiMessages?.length) {
+      return {
+        ok: false as const,
+        error: 'AI 已经生成回复，但保存到聊天记录时失败了。',
+      };
+    }
+
+    return {
+      ok: true as const,
+      messages: insertedAiMessages.map(mapMessageRecord),
+    };
+  };
+
+  const sendVoiceMessage = async (audioFile: File, audioDurationSeconds: number) => {
+    if (!threadId || !userId) {
+      return;
+    }
+
+    setIsSending(true);
+    setIsTranscribing(true);
+    setErrorMessage('');
+    setStreamingReply('');
+
+    const [uploadResult, transcriptionResult] = await Promise.all([
+      uploadChatAudio(audioFile, userId),
+      requestTranscription(audioFile),
+    ]);
+
+    setIsTranscribing(false);
+
+    if (!uploadResult.ok) {
+      setErrorMessage(uploadResult.error);
+      setIsSending(false);
+      return;
+    }
+
+    if (!transcriptionResult.ok) {
+      setErrorMessage(transcriptionResult.error);
+      setIsSending(false);
+      return;
+    }
+
+    const transcript = transcriptionResult.text.trim();
+
+    if (!transcript) {
+      setErrorMessage('这段语音没有识别出文字，你可以再说一次。');
+      setIsSending(false);
+      return;
+    }
+
+    const activeMode = aiMode;
+
+    const { data: insertedUserMessage, error: insertUserError } = await supabase
+      .from('messages')
+      .insert({
+        thread_id: threadId,
+        user_id: userId,
+        role: 'user',
+        content: transcript,
+        transcript,
+        audio_url: uploadResult.audioUrl,
+        audio_duration_seconds: audioDurationSeconds,
+        message_kind: 'audio',
+        mode: activeMode,
+      })
+      .select('id, thread_id, role, content, image_url, audio_url, audio_duration_seconds, transcript, message_kind, created_at, mode')
+      .single();
+
+    if (insertUserError || !insertedUserMessage) {
+      setErrorMessage(insertUserError?.message || '保存语音消息失败。');
+      setIsSending(false);
+      return;
+    }
+
+    const userMessage = mapMessageRecord(insertedUserMessage);
+    setMessages((current) => [...current, userMessage]);
+    setPendingRetry(null);
+
+    await supabase
+      .from('chat_threads')
+      .update({
+        updated_at: new Date().toISOString(),
+        title: buildModeThreadTitle(aiMode),
+      })
+      .eq('id', threadId);
+
+    await refreshThreads();
+
+    const aiReply = await streamAIReply({
+      message: transcript,
+      aiMode,
+      mode: 'chat',
+      messages: [...messages, userMessage],
+      onDelta: setStreamingReply,
+    });
+
+    if (!aiReply.ok) {
+      setPendingRetry({
+        message: transcript,
+        imageUrl: null,
+        userMessage,
+        activeMode: 'chat',
+        aiMode,
+        asAudioReply: true,
+      });
+      setErrorMessage(aiReply.error);
+      setIsSending(false);
+      setStreamingReply('');
+      return;
+    }
+
+    const persistResult = await persistAssistantReply({
+      reply: aiReply.reply,
+      activeMode,
+      asAudio: true,
+    });
+
+    if (!persistResult.ok) {
+      setPendingRetry({
+        message: transcript,
+        imageUrl: null,
+        userMessage,
+        activeMode: 'chat',
+        aiMode,
+        asAudioReply: true,
+      });
+      setErrorMessage(persistResult.error);
+      setIsSending(false);
+      setStreamingReply('');
+      return;
+    }
+
+    setMessages((current) => [...current, ...persistResult.messages]);
+    setStreamingReply('');
+    setIsSending(false);
+  };
+
   const handleSend = async () => {
     const trimmedInput = input.trim();
     const hasImage = Boolean(selectedImageFile);
@@ -463,7 +694,7 @@ export default function ChatPage() {
         image_url: uploadedImageUrl,
         mode: activeMode,
       })
-      .select('id, thread_id, role, content, image_url, created_at, mode')
+      .select('id, thread_id, role, content, image_url, audio_url, audio_duration_seconds, transcript, message_kind, created_at, mode')
       .single();
 
     if (insertUserError) {
@@ -533,24 +764,16 @@ export default function ChatPage() {
       return;
     }
 
-    const aiMessageParts = splitAssistantReply(aiReply.reply);
+    const persistResult = await persistAssistantReply({
+      reply: aiReply.reply,
+      activeMode,
+      asAudio: false,
+    });
 
-    const { data: insertedAiMessages, error: insertAiError } = await supabase
-      .from('messages')
-      .insert(
-        aiMessageParts.map((content) => ({
-          thread_id: threadId,
-          user_id: userId,
-          role: 'assistant',
-          content,
-          mode: activeMode,
-        }))
-      )
-      .select('id, thread_id, role, content, image_url, created_at, mode')
-      .order('created_at', { ascending: true });
-
-    if (!insertAiError && insertedAiMessages?.length) {
-      setMessages((current) => [...current, ...insertedAiMessages.map(mapMessageRecord)]);
+    if (persistResult.ok) {
+      setMessages((current) => [...current, ...persistResult.messages]);
+    } else {
+      setErrorMessage(persistResult.error);
     }
 
     setStreamingReply('');
@@ -582,27 +805,17 @@ export default function ChatPage() {
       return;
     }
 
-    const aiMessageParts = splitAssistantReply(aiReply.reply);
+    const persistResult = await persistAssistantReply({
+      reply: aiReply.reply,
+      activeMode: pendingRetry.activeMode === 'chat' ? pendingRetry.aiMode : pendingRetry.activeMode,
+      asAudio: Boolean(pendingRetry.asAudioReply),
+    });
 
-    const { data: insertedAiMessages, error: insertAiError } = await supabase
-      .from('messages')
-      .insert(
-        aiMessageParts.map((content) => ({
-          thread_id: threadId,
-          user_id: userId,
-          role: 'assistant',
-          content,
-          mode: pendingRetry.activeMode,
-        }))
-      )
-      .select('id, thread_id, role, content, image_url, created_at, mode')
-      .order('created_at', { ascending: true });
-
-    if (!insertAiError && insertedAiMessages?.length) {
-      setMessages((current) => [...current, ...insertedAiMessages.map(mapMessageRecord)]);
+    if (persistResult.ok) {
+      setMessages((current) => [...current, ...persistResult.messages]);
       setPendingRetry(null);
-    } else if (insertAiError) {
-      setErrorMessage('AI 已经生成回复，但保存到聊天记录时失败了。请稍后再试。');
+    } else {
+      setErrorMessage(persistResult.error);
     }
 
     setStreamingReply('');
@@ -610,7 +823,7 @@ export default function ChatPage() {
   };
 
   const handleToggleVoiceInput = async () => {
-    if (!voiceSupported || isSending || isLoading || isTranscribing) {
+    if (!voiceSupported || isSending || isLoading || isTranscribing || mode !== 'chat') {
       return;
     }
 
@@ -663,34 +876,23 @@ export default function ChatPage() {
         const audioFile = new File([audioBlob], `voice-input.${extension}`, {
           type: audioBlob.type || 'audio/webm',
         });
+        const durationSeconds = Math.max(
+          1,
+          Math.round((Date.now() - (recordingStartedAtRef.current || Date.now())) / 1000)
+        );
 
-        setIsTranscribing(true);
-
-        const result = await requestTranscription(audioFile);
-
-        setIsTranscribing(false);
-
-        if (!result.ok) {
-          setErrorMessage(result.error);
-          return;
-        }
-
-        const transcript = result.text.trim();
-
-        if (!transcript) {
-          setErrorMessage('这段语音没有识别出文字，你可以再说一次。');
-          return;
-        }
-
-        setInput((current) => (current ? `${current} ${transcript}` : transcript));
+        recordingStartedAtRef.current = null;
+        await sendVoiceMessage(audioFile, durationSeconds);
       };
 
       recorder.start();
+      recordingStartedAtRef.current = Date.now();
       setIsRecording(true);
     } catch {
       setErrorMessage('没有拿到麦克风权限，请在浏览器里允许录音后再试。');
       setIsRecording(false);
       setIsTranscribing(false);
+      recordingStartedAtRef.current = null;
       stopActiveRecording();
     }
   };
@@ -982,6 +1184,10 @@ function mapMessageRecord(record: MessageRecord): Message {
     sender: record.role === 'user' ? 'user' : 'ai',
     content: record.content,
     imageUrl: record.image_url,
+    audioUrl: record.audio_url,
+    audioDurationSeconds: record.audio_duration_seconds,
+    transcript: record.transcript,
+    kind: record.message_kind || (record.audio_url ? 'audio' : 'text'),
     createdAt: record.created_at,
   };
 }
@@ -1219,6 +1425,67 @@ async function uploadChatImage(file: File, userId: string) {
   const { data } = supabase.storage.from('chat-images').getPublicUrl(path);
 
   return { ok: true as const, imageUrl: data.publicUrl };
+}
+
+async function uploadChatAudio(file: File, userId: string) {
+  const fileExtension = file.name.split('.').pop()?.toLowerCase() || 'mp3';
+  const safeExtension = ['mp3', 'm4a', 'wav', 'webm', 'ogg', 'mp4'].includes(fileExtension)
+    ? fileExtension
+    : 'mp3';
+  const path = `${userId}/${Date.now()}-${crypto.randomUUID()}.${safeExtension}`;
+
+  const { error } = await supabase.storage
+    .from('chat-audio')
+    .upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || 'audio/mpeg',
+    });
+
+  if (error) {
+    return { ok: false as const, error: `语音上传失败：${error.message}` };
+  }
+
+  const { data } = supabase.storage.from('chat-audio').getPublicUrl(path);
+
+  return { ok: true as const, audioUrl: data.publicUrl };
+}
+
+async function measureAudioDuration(blob: Blob) {
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const duration = await new Promise<number>((resolve) => {
+      const audio = new Audio();
+      audio.preload = 'metadata';
+      audio.src = objectUrl;
+
+      audio.onloadedmetadata = () => {
+        resolve(Number.isFinite(audio.duration) ? Math.max(1, Math.round(audio.duration)) : 1);
+      };
+
+      audio.onerror = () => resolve(1);
+    });
+
+    return duration;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function playAudioBlob(blob: Blob) {
+  const objectUrl = URL.createObjectURL(blob);
+  const audio = new Audio(objectUrl);
+
+  try {
+    await audio.play();
+  } catch {
+    // Ignore autoplay failures and let the user play from the message bubble.
+  }
+
+  audio.addEventListener('ended', () => {
+    URL.revokeObjectURL(objectUrl);
+  });
 }
 
 function isAllowedImageType(file: File) {

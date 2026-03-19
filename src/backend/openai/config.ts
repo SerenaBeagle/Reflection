@@ -5,6 +5,7 @@ export function getOpenAIConfig() {
     process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe';
   const realtimeModel = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
   const realtimeVoice = process.env.OPENAI_REALTIME_VOICE || 'marin';
+  const ttsModel = process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts';
 
   return {
     apiKey,
@@ -12,5 +13,6 @@ export function getOpenAIConfig() {
     transcriptionModel,
     realtimeModel,
     realtimeVoice,
+    ttsModel,
   };
 }

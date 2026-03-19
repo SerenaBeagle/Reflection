@@ -6,6 +6,10 @@ export type Message = {
   sender: 'user' | 'ai';
   content: string;
   imageUrl?: string | null;
+  audioUrl?: string | null;
+  audioDurationSeconds?: number | null;
+  transcript?: string | null;
+  kind?: 'text' | 'audio';
   createdAt: string;
   aiMode?: AIMode;
   emotion?: EmotionType;
