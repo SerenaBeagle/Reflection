@@ -65,8 +65,10 @@ export default function ChatPage() {
     Boolean(navigator.mediaDevices?.getUserMedia);
 
   const stopActiveRecording = () => {
-    if (mediaRecorderRef.current?.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+    const recorder = mediaRecorderRef.current;
+
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
     }
 
     stopStreamTracks(recordingStreamRef.current);
