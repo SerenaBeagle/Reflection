@@ -1,12 +1,14 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { AudioLines, Loader2, PhoneCall, PhoneOff } from 'lucide-react';
 import { AppHeader } from '@/components/AppHeader';
 import { ChatBubble } from '@/components/ChatBubble';
 import { ChatInput } from '@/components/ChatInput';
 import { ModeSelector } from '@/components/ModeSelector';
 import { DiaryTextArea } from '@/components/DiaryTextArea';
 import { requestChatStream } from '@/frontend/api/chat-api';
+import { requestRealtimeSession } from '@/frontend/api/realtime-api';
 import { requestTranscription } from '@/frontend/api/transcribe-api';
 import { AIMode } from '@/types/user';
 import { Message } from '@/types/message';
@@ -52,12 +54,20 @@ export default function ChatPage() {
   const [isSending, setIsSending] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isRealtimeConnecting, setIsRealtimeConnecting] = useState(false);
+  const [isRealtimeActive, setIsRealtimeActive] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState('准备好开始语音通话。');
+  const [liveAssistantTranscript, setLiveAssistantTranscript] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [pendingRetry, setPendingRetry] = useState<PendingRetry | null>(null);
   const roleProfile = ROLE_PROFILES[aiMode];
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const recordedChunksRef = React.useRef<Blob[]>([]);
   const recordingStreamRef = React.useRef<MediaStream | null>(null);
+  const peerConnectionRef = React.useRef<RTCPeerConnection | null>(null);
+  const dataChannelRef = React.useRef<RTCDataChannel | null>(null);
+  const remoteAudioRef = React.useRef<HTMLAudioElement | null>(null);
+  const localRealtimeStreamRef = React.useRef<MediaStream | null>(null);
   const voiceSupported =
     typeof window !== 'undefined' &&
     typeof navigator !== 'undefined' &&
@@ -86,6 +96,29 @@ export default function ChatPage() {
     setSelectedImageFile(null);
     setSelectedImagePreviewUrl(null);
   }, [selectedImagePreviewUrl]);
+
+  const disconnectRealtimeSession = React.useCallback(() => {
+    dataChannelRef.current?.close();
+    dataChannelRef.current = null;
+
+    peerConnectionRef.current?.getSenders().forEach((sender) => sender.track?.stop());
+    peerConnectionRef.current?.close();
+    peerConnectionRef.current = null;
+
+    stopStreamTracks(localRealtimeStreamRef.current);
+    localRealtimeStreamRef.current = null;
+
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.pause();
+      remoteAudioRef.current.srcObject = null;
+      remoteAudioRef.current = null;
+    }
+
+    setIsRealtimeConnecting(false);
+    setIsRealtimeActive(false);
+    setLiveAssistantTranscript('');
+    setRealtimeStatus('语音通话已结束。');
+  }, []);
 
   async function loadThreadMessages(targetThread: ThreadRecord, currentThreads: ThreadRecord[], currentUserId: string) {
     setThreadId(targetThread.id);
@@ -340,6 +373,12 @@ export default function ChatPage() {
       stopStreamTracks(recordingStreamRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      disconnectRealtimeSession();
+    };
+  }, [disconnectRealtimeSession]);
 
   const refreshThreads = async () => {
     if (!userId) {
@@ -656,6 +695,110 @@ export default function ChatPage() {
     }
   };
 
+  const handleToggleRealtimeVoice = async () => {
+    if (!voiceSupported || isLoading || isSending || isRecording || isTranscribing) {
+      return;
+    }
+
+    if (isRealtimeActive || isRealtimeConnecting) {
+      disconnectRealtimeSession();
+      return;
+    }
+
+    try {
+      setErrorMessage('');
+      setIsRealtimeConnecting(true);
+      setRealtimeStatus('正在连接语音通话...');
+      setLiveAssistantTranscript('');
+
+      const localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      localRealtimeStreamRef.current = localStream;
+
+      const peerConnection = new RTCPeerConnection();
+      peerConnectionRef.current = peerConnection;
+
+      const remoteAudio = document.createElement('audio');
+      remoteAudio.autoplay = true;
+      remoteAudio.setAttribute('playsinline', 'true');
+      remoteAudioRef.current = remoteAudio;
+
+      peerConnection.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+      };
+
+      peerConnection.onconnectionstatechange = () => {
+        const state = peerConnection.connectionState;
+
+        if (state === 'connected') {
+          setIsRealtimeConnecting(false);
+          setIsRealtimeActive(true);
+          setRealtimeStatus('语音通话已接通，可以直接说话。');
+          return;
+        }
+
+        if (state === 'connecting') {
+          setRealtimeStatus('语音通话连接中...');
+          return;
+        }
+
+        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+          disconnectRealtimeSession();
+        }
+      };
+
+      localStream.getTracks().forEach((track) => {
+        peerConnection.addTrack(track, localStream);
+      });
+
+      const dataChannel = peerConnection.createDataChannel('oai-events');
+      dataChannelRef.current = dataChannel;
+
+      dataChannel.addEventListener('open', () => {
+        setRealtimeStatus('语音通话已连接，开始说话吧。');
+      });
+
+      dataChannel.addEventListener('close', () => {
+        setRealtimeStatus('语音通话已断开。');
+      });
+
+      dataChannel.addEventListener('message', (event) => {
+        handleRealtimeServerEvent({
+          data: event.data,
+          setErrorMessage,
+          setRealtimeStatus,
+          setLiveAssistantTranscript,
+        });
+      });
+
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      const sessionResult = await requestRealtimeSession({
+        aiMode,
+        sdp: offer.sdp || '',
+      });
+
+      if (!sessionResult.ok) {
+        throw new Error(sessionResult.error);
+      }
+
+      await peerConnection.setRemoteDescription({
+        type: 'answer',
+        sdp: sessionResult.sdp,
+      });
+    } catch (error) {
+      disconnectRealtimeSession();
+      setErrorMessage(error instanceof Error ? error.message : '实时语音连接失败，请稍后再试。');
+    }
+  };
+
   return (
     <div className="flex h-screen max-h-screen flex-col bg-transparent">
       <AppHeader title={threadTitle} right={<ModeSelector value={aiMode} onChange={setAIMode} />} />
@@ -672,6 +815,45 @@ export default function ChatPage() {
               </span>
             </div>
             <p className="mt-1 text-sm leading-6 text-[color:var(--slate)]">{roleProfile.welcome}</p>
+            {mode === 'chat' ? (
+              <div className="mt-3 rounded-[20px] border border-[color:var(--border-subtle)] bg-[color:var(--surface-muted)] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-medium text-[color:var(--ikea-blue-deep)]">
+                      <AudioLines className="h-4 w-4" />
+                      实时语音通话
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-[color:var(--slate)]">{realtimeStatus}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleRealtimeVoice}
+                    disabled={!voiceSupported || isRecording || isTranscribing}
+                    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      isRealtimeActive || isRealtimeConnecting
+                        ? 'bg-[#c75050] text-white hover:bg-[#a83f3f]'
+                        : 'bg-[color:var(--ikea-blue)] text-white hover:bg-[color:var(--ikea-blue-deep)]'
+                    }`}
+                  >
+                    {isRealtimeConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    {isRealtimeActive || isRealtimeConnecting ? (
+                      <PhoneOff className="h-4 w-4" />
+                    ) : (
+                      <PhoneCall className="h-4 w-4" />
+                    )}
+                    {isRealtimeActive || isRealtimeConnecting ? '结束语音' : '开始语音'}
+                  </button>
+                </div>
+                {liveAssistantTranscript ? (
+                  <div className="mt-3 rounded-2xl bg-white/80 px-3 py-2 text-sm leading-6 text-[color:var(--foreground)]">
+                    <span className="mr-2 text-xs uppercase tracking-[0.14em] text-[color:var(--slate)]">
+                      live
+                    </span>
+                    {liveAssistantTranscript}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1105,6 +1287,97 @@ function mapChatError(error: unknown) {
   }
 
   return `AI 暂时没有顺利回应：${error}`;
+}
+
+function handleRealtimeServerEvent({
+  data,
+  setErrorMessage,
+  setRealtimeStatus,
+  setLiveAssistantTranscript,
+}: {
+  data: string;
+  setErrorMessage: (value: string) => void;
+  setRealtimeStatus: (value: string) => void;
+  setLiveAssistantTranscript: React.Dispatch<React.SetStateAction<string>>;
+}) {
+  try {
+    const event = JSON.parse(data) as {
+      type?: string;
+      delta?: string;
+      transcript?: string;
+      response?: {
+        output?: Array<{
+          content?: Array<{
+            transcript?: string;
+            text?: string;
+          }>;
+        }>;
+      };
+      error?: {
+        message?: string;
+      };
+      message?: string;
+    };
+
+    switch (event.type) {
+      case 'input_audio_buffer.speech_started':
+        setRealtimeStatus('正在听你说...');
+        return;
+      case 'input_audio_buffer.speech_stopped':
+        setRealtimeStatus('我在整理你的话...');
+        return;
+      case 'response.created':
+        setLiveAssistantTranscript('');
+        setRealtimeStatus('正在回应你...');
+        return;
+      case 'response.output_audio_transcript.delta':
+        if (event.delta) {
+          setLiveAssistantTranscript((current) => `${current}${event.delta}`);
+        }
+        return;
+      case 'response.output_audio_transcript.done':
+        if (event.transcript) {
+          setLiveAssistantTranscript(event.transcript);
+        }
+        setRealtimeStatus('语音回复完成。');
+        return;
+      case 'response.done': {
+        const transcript = extractRealtimeTranscript(event.response);
+        if (transcript) {
+          setLiveAssistantTranscript(transcript);
+        }
+        setRealtimeStatus('语音通话已接通，可以继续说话。');
+        return;
+      }
+      case 'error':
+      case 'invalid_request_error':
+        setErrorMessage(event.error?.message || event.message || '实时语音返回了一个错误。');
+        return;
+      default:
+        return;
+    }
+  } catch {
+    // Ignore non-JSON data channel messages.
+  }
+}
+
+function extractRealtimeTranscript(response?: {
+  output?: Array<{
+    content?: Array<{
+      transcript?: string;
+      text?: string;
+    }>;
+  }>;
+}) {
+  if (!response?.output?.length) {
+    return '';
+  }
+
+  return response.output
+    .flatMap((item) => item.content || [])
+    .map((content) => content.transcript || content.text || '')
+    .join('')
+    .trim();
 }
 
 function getPreferredAudioMimeType() {
