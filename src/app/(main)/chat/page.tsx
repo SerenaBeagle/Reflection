@@ -7,6 +7,7 @@ import { ChatInput } from '@/components/ChatInput';
 import { ModeSelector } from '@/components/ModeSelector';
 import { DiaryTextArea } from '@/components/DiaryTextArea';
 import { requestChatStream } from '@/frontend/api/chat-api';
+import { requestTranscription } from '@/frontend/api/transcribe-api';
 import { AIMode } from '@/types/user';
 import { Message } from '@/types/message';
 import { supabase } from '@/lib/supabase/client';
@@ -49,9 +50,40 @@ export default function ChatPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [pendingRetry, setPendingRetry] = useState<PendingRetry | null>(null);
   const roleProfile = ROLE_PROFILES[aiMode];
+  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = React.useRef<Blob[]>([]);
+  const recordingStreamRef = React.useRef<MediaStream | null>(null);
+  const voiceSupported =
+    typeof window !== 'undefined' &&
+    typeof navigator !== 'undefined' &&
+    typeof MediaRecorder !== 'undefined' &&
+    Boolean(navigator.mediaDevices?.getUserMedia);
+
+  const stopActiveRecording = () => {
+    if (mediaRecorderRef.current?.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+
+    stopStreamTracks(recordingStreamRef.current);
+    mediaRecorderRef.current = null;
+    recordingStreamRef.current = null;
+    recordedChunksRef.current = [];
+    setIsRecording(false);
+  };
+
+  const clearSelectedImage = React.useCallback(() => {
+    if (selectedImagePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(selectedImagePreviewUrl);
+    }
+
+    setSelectedImageFile(null);
+    setSelectedImagePreviewUrl(null);
+  }, [selectedImagePreviewUrl]);
 
   async function loadThreadMessages(targetThread: ThreadRecord, currentThreads: ThreadRecord[], currentUserId: string) {
     setThreadId(targetThread.id);
@@ -288,18 +320,22 @@ export default function ChatPage() {
   }, [aiMode, threads, userId]);
 
   useEffect(() => {
-    if (mode === 'diary') {
-      clearSelectedImage();
-    }
-  }, [mode]);
-
-  useEffect(() => {
     return () => {
       if (selectedImagePreviewUrl?.startsWith('blob:')) {
         URL.revokeObjectURL(selectedImagePreviewUrl);
       }
     };
   }, [selectedImagePreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current?.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+
+      stopStreamTracks(recordingStreamRef.current);
+    };
+  }, []);
 
   const refreshThreads = async () => {
     if (!userId) {
@@ -345,15 +381,6 @@ export default function ChatPage() {
     setErrorMessage('');
     setSelectedImageFile(file);
     setSelectedImagePreviewUrl(URL.createObjectURL(file));
-  };
-
-  const clearSelectedImage = () => {
-    if (selectedImagePreviewUrl?.startsWith('blob:')) {
-      URL.revokeObjectURL(selectedImagePreviewUrl);
-    }
-
-    setSelectedImageFile(null);
-    setSelectedImagePreviewUrl(null);
   };
 
   const handleSend = async () => {
@@ -539,6 +566,92 @@ export default function ChatPage() {
     setIsSending(false);
   };
 
+  const handleToggleVoiceInput = async () => {
+    if (!voiceSupported || isSending || isLoading || isTranscribing) {
+      return;
+    }
+
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    try {
+      setErrorMessage('');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = getPreferredAudioMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      recordedChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setErrorMessage('录音时出了点问题，请再试一次。');
+        setIsRecording(false);
+        setIsTranscribing(false);
+        stopActiveRecording();
+      };
+
+      recorder.onstop = async () => {
+        setIsRecording(false);
+
+        const chunks = [...recordedChunksRef.current];
+        recordedChunksRef.current = [];
+        stopStreamTracks(recordingStreamRef.current);
+        recordingStreamRef.current = null;
+        mediaRecorderRef.current = null;
+
+        if (!chunks.length) {
+          return;
+        }
+
+        const audioBlob = new Blob(chunks, {
+          type: recorder.mimeType || mimeType || 'audio/webm',
+        });
+
+        const extension = getAudioFileExtension(audioBlob.type);
+        const audioFile = new File([audioBlob], `voice-input.${extension}`, {
+          type: audioBlob.type || 'audio/webm',
+        });
+
+        setIsTranscribing(true);
+
+        const result = await requestTranscription(audioFile);
+
+        setIsTranscribing(false);
+
+        if (!result.ok) {
+          setErrorMessage(result.error);
+          return;
+        }
+
+        const transcript = result.text.trim();
+
+        if (!transcript) {
+          setErrorMessage('这段语音没有识别出文字，你可以再说一次。');
+          return;
+        }
+
+        setInput((current) => (current ? `${current} ${transcript}` : transcript));
+      };
+
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      setErrorMessage('没有拿到麦克风权限，请在浏览器里允许录音后再试。');
+      setIsRecording(false);
+      setIsTranscribing(false);
+      stopActiveRecording();
+    }
+  };
+
   return (
     <div className="flex h-screen max-h-screen flex-col bg-transparent">
       <AppHeader title={threadTitle} right={<ModeSelector value={aiMode} onChange={setAIMode} />} />
@@ -646,7 +759,10 @@ export default function ChatPage() {
                 ? 'border-[color:var(--ikea-blue)] bg-[color:var(--ikea-blue-soft)] text-[color:var(--ikea-blue-deep)]'
                 : 'border-[color:var(--border-subtle)] bg-[color:var(--surface)] text-[color:var(--slate)]'
             }`}
-            onClick={() => setMode('diary')}
+            onClick={() => {
+              clearSelectedImage();
+              setMode('diary');
+            }}
           >
             日记模式
           </button>
@@ -660,6 +776,10 @@ export default function ChatPage() {
             onPickImage={handlePickImage}
             onClearImage={clearSelectedImage}
             disabled={isSending || isLoading}
+            onToggleVoiceInput={handleToggleVoiceInput}
+            isRecording={isRecording}
+            isTranscribing={isTranscribing}
+            voiceSupported={voiceSupported}
           />
         ) : (
           <DiaryTextArea value={input} onChange={setInput} onSubmit={handleSend} disabled={isSending || isLoading} />
@@ -981,4 +1101,35 @@ function mapChatError(error: unknown) {
   }
 
   return `AI 暂时没有顺利回应：${error}`;
+}
+
+function getPreferredAudioMimeType() {
+  if (typeof MediaRecorder === 'undefined') {
+    return '';
+  }
+
+  const candidateTypes = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+  ];
+
+  return candidateTypes.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function getAudioFileExtension(mimeType: string) {
+  if (mimeType.includes('mp4')) {
+    return 'mp4';
+  }
+
+  if (mimeType.includes('ogg')) {
+    return 'ogg';
+  }
+
+  return 'webm';
+}
+
+function stopStreamTracks(stream: MediaStream | null) {
+  stream?.getTracks().forEach((track) => track.stop());
 }
