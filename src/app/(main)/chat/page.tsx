@@ -822,13 +822,8 @@ export default function ChatPage() {
     setIsSending(false);
   };
 
-  const handleToggleVoiceInput = async () => {
-    if (!voiceSupported || isSending || isLoading || isTranscribing || mode !== 'chat') {
-      return;
-    }
-
-    if (isRecording) {
-      mediaRecorderRef.current?.stop();
+  const handleStartVoiceInput = async () => {
+    if (!voiceSupported || isSending || isLoading || isTranscribing || mode !== 'chat' || isRecording) {
       return;
     }
 
@@ -895,6 +890,14 @@ export default function ChatPage() {
       recordingStartedAtRef.current = null;
       stopActiveRecording();
     }
+  };
+
+  const handleStopVoiceInput = () => {
+    if (!isRecording) {
+      return;
+    }
+
+    mediaRecorderRef.current?.stop();
   };
 
   const handleToggleRealtimeVoice = async () => {
@@ -1164,7 +1167,8 @@ export default function ChatPage() {
             onPickImage={handlePickImage}
             onClearImage={clearSelectedImage}
             disabled={isSending || isLoading}
-            onToggleVoiceInput={handleToggleVoiceInput}
+            onStartVoiceInput={handleStartVoiceInput}
+            onStopVoiceInput={handleStopVoiceInput}
             isRecording={isRecording}
             isTranscribing={isTranscribing}
             voiceSupported={voiceSupported}
